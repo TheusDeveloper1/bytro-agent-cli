@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bytro-agent-cli"
+version = "1.0.0"
+description = "Agente de programação e chat de IA no terminal."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
+authors = [{name = "Matheus Nascimento"}]
+dependencies = [
+  "textual>=8.2.8,<9", "httpx[socks]>=0.28,<1", "cryptography>=44,<51",
+  "keyring>=25,<26", "platformdirs>=4,<5", "psutil>=6,<8", "packaging>=24,<27",
+]
+
+[project.scripts]
+bytro = "bytro_cli.Main:main"
+bytro-cli = "bytro_cli.Main:main"
+
+[project.urls]
+Homepage = "https://github.com/theuzzdeveloper/bytro-agent-cli"
+Issues = "https://github.com/theuzzdeveloper/bytro-agent-cli/issues"
+Author = "https://github.com/theuzzdeveloper"
+
+[tool.hatch.build.targets.wheel]
+only-include = []
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/Main.py" = "bytro_cli/Main.py"
+"src/ui" = "bytro_cli/ui"
+"pyproject.toml" = "bytro_cli/pyproject.toml"
+
+[tool.hatch.build.targets.sdist]
+include = ["src/", "pyproject.toml", "README.md", "LICENSE", "SHA256SUMS"]
