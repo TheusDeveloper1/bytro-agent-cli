@@ -322,8 +322,6 @@ bytro-cli-v2/
 ├── pyproject.toml
 ├── README.md
 ├── LICENSE
-├── CHANGELOG.md
-└── SHA256SUMS
 ```
 
 `Main.py` separa configuração, cofre, histórico, provedores, ferramentas, loop do agente, atualização e interface em classes. O TCSS cuida da aparência. A wheel empacota esse mesmo código em `bytro_cli`, sem alterar a estrutura de desenvolvimento.
