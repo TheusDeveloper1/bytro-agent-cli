@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: GPL-3.0-only
-"""Bytro CLI. Núcleo, ferramentas e interface em um único módulo."""
 from __future__ import annotations
 
 import argparse
@@ -56,10 +54,8 @@ PROVIDERS = {
     "other": ("http://localhost:11434/v1", "", "BYTRO_API_KEY"),
 }
 
-
 def clean(text: str) -> str:
     return CONTROL.sub("", str(text))
-
 
 def atomic_write(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -74,11 +70,9 @@ def atomic_write(path: Path, data: bytes) -> None:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(name)
 
-
 def sha256_file(path: Path) -> str:
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
-
 
 def app_hash() -> str:
     """Mesmo digest no código extraído e na wheel; nomes normalizados."""
@@ -87,7 +81,6 @@ def app_hash() -> str:
                        ("src/ui/app.tcss", SOURCE / "ui/app.tcss")]:
         digest.update(name.encode() + b"\0" + path.read_bytes() + b"\0")
     return digest.hexdigest()
-
 
 @dataclass
 class Config:
@@ -118,7 +111,6 @@ class Config:
 
     def save(self, path: Path) -> None:
         atomic_write(path, json.dumps(self.__dict__, ensure_ascii=False, indent=2).encode())
-
 
 class Secrets:
     """Tokens cifrados. Chave mestra só no cofre nativo ou derivada de senha."""
@@ -216,7 +208,6 @@ class Secrets:
             return [self.redact(v) for v in value]
         return value
 
-
 class History:
     def __init__(self, directory: Path):
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -260,7 +251,6 @@ class History:
     def close(self):
         self.db.close()
 
-
 def endpoint(url: str) -> str:
     parsed = urlsplit(url)
     if (not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment
@@ -270,18 +260,15 @@ def endpoint(url: str) -> str:
         raise ValueError("HTTP só é permitido em localhost. Para servidores remotos, use HTTPS.")
     return url.rstrip("/")
 
-
 class APIError(ValueError):
     def __init__(self, text, retry_after=0):
         super().__init__(text)
         self.retry_after = retry_after
 
-
 @dataclass
 class Turn:
     message: dict
     calls: list
-
 
 class Provider:
     def __init__(self, cfg: Config, secret: str, http: httpx.AsyncClient):
@@ -424,12 +411,9 @@ class Provider:
         except (KeyError, TypeError, IndexError, AttributeError):
             raise APIError("Resposta de chat incompatível. Confira o modelo e o provedor.") from None
 
-
-# Tipos compactos para gerar esquemas de function calling.
 def spec(name, description, properties=None, required=()):
     return {"type": "function", "function": {"name": name, "description": description,
             "parameters": {"type": "object", "properties": properties or {}, "required": list(required), "additionalProperties": False}}}
-
 
 STRING = {"type": "string"}
 INTEGER = {"type": "integer"}
@@ -455,7 +439,6 @@ TOOL_SPECS = [
 ]
 MUTATING = {"write_file", "replace_text", "make_directory", "move_file", "delete_file", "run_command"}
 IGNORE = {".git", ".venv", "venv", "node_modules", "__pycache__", ".ssh", ".aws", ".gnupg"}
-
 
 class PageText(HTMLParser):
     def __init__(self):
@@ -484,7 +467,6 @@ class PageText(HTMLParser):
         if self.link is not None:
             self.link[1] += data
 
-
 async def public_page(http: httpx.AsyncClient, url: str) -> str:
     for _ in range(4):
         parsed = urlsplit(url)
@@ -508,7 +490,6 @@ async def public_page(http: httpx.AsyncClient, url: str) -> str:
                 chunks.append(chunk)
             return b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
     raise ValueError("Redirecionamentos demais.")
-
 
 async def process(argv: list[str], root: Path, timeout: int = 60) -> dict:
     if not argv or len(argv) > 100 or any(not isinstance(x, str) or "\0" in x for x in argv):
@@ -535,7 +516,6 @@ async def process(argv: list[str], root: Path, timeout: int = 60) -> dict:
                     child.kill()
             # Drena o pipe após matar o processo para não travar com saída volumosa.
             await child.communicate()
-
 
 class Tools:
     def __init__(self, root: Path, private: Path, http: httpx.AsyncClient):
@@ -712,7 +692,6 @@ class Tools:
             commands = {"git_status": ["status", "--short", "--branch"], "git_diff": ["diff", "--no-ext-diff", "--no-textconv"], "git_log": ["log", "-10", "--oneline"]}
             return await process(["git", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.pager=cat", *commands[name]], self.root)
         return await self.execute(name, args, approve)
-
 
 class Agent:
     def __init__(self, tools: Tools, secrets: Secrets):
