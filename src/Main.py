@@ -292,7 +292,7 @@ class Provider:
         headers = ({"x-api-key": self.secret, "anthropic-version": "2023-06-01"}
                    if self.cfg.provider == "anthropic" else {"Authorization": f"Bearer {self.secret}"} if self.secret else {})
         try:
-            response = await self.http.request(method, self.base + route, headers=headers, **kwargs)
+            response = await self.http.request(method, (self.base.removesuffix("/openai") + "/models" if route == "/../models" else self.base + route), headers=kwargs.pop("headers", headers), **kwargs)
         except httpx.TimeoutException:
             raise APIError("A API demorou demais. Tente novamente ou escolha outro modelo.") from None
         except httpx.RequestError:
@@ -318,12 +318,47 @@ class Provider:
             raise APIError("A API retornou uma resposta inválida ou um erro interno.") from None
 
     async def models(self) -> list[str]:
-        if self.cfg.provider == "puter":
-            data = await self.request("GET", "/puterai/chat/models/details")
-            rows = data.get("models", [])
-            return sorted({r if isinstance(r, str) else r.get("puterId", r.get("id", "")) for r in rows} - {""})
-        data = await self.request("GET", "/models")
-        return sorted({r["id"] for r in data.get("data", []) if isinstance(r, dict) and isinstance(r.get("id"), str)})
+        provider = self.cfg.provider
+        identifiers, cursors = set(), set()
+        params = {"limit": 100} if provider == "anthropic" else {}
+        for _ in range(100):
+            if provider == "gemini":
+                route = "/models" if not self.base.endswith("/openai") else "/../models"
+                data = await self.request("GET", route, params=params,
+                                          headers={"x-goog-api-key": self.secret})
+                rows = data.get("models")
+            else:
+                route = "/puterai/chat/models/details" if provider == "puter" else "/models"
+                data = await self.request("GET", route, params=params)
+                rows = data.get("models" if provider == "puter" else "data")
+            if not isinstance(rows, list):
+                raise APIError("O provedor não retornou um catálogo de modelos válido.")
+            for row in rows:
+                if isinstance(row, str):
+                    identifier = row
+                elif isinstance(row, dict):
+                    identifier = (row.get("name") if provider == "gemini" else
+                                  row.get("puterId") or row.get("id"))
+                    if provider == "gemini" and row.get("supportedGenerationMethods") and "generateContent" not in row["supportedGenerationMethods"]:
+                        continue
+                else:
+                    continue
+                if isinstance(identifier, str) and identifier.strip():
+                    identifiers.add(identifier.removeprefix("models/") if provider == "gemini" else identifier)
+            cursor = data.get("nextPageToken") if provider == "gemini" else data.get("last_id") if data.get("has_more") else None
+            if data.get("has_more") and not cursor and rows and isinstance(rows[-1], dict):
+                cursor = rows[-1].get("id")
+            if not cursor:
+                if data.get("has_more"):
+                    raise APIError("O catálogo retornou paginação incompleta.")
+                if not identifiers:
+                    raise APIError("Nenhum modelo disponível para este provedor ou credencial.")
+                return sorted(identifiers, key=str.casefold)
+            if not isinstance(cursor, str) or cursor in cursors:
+                raise APIError("O catálogo retornou paginação repetida ou inválida.")
+            cursors.add(cursor)
+            params["pageToken" if provider == "gemini" else "after_id" if provider == "anthropic" else "after"] = cursor
+        raise APIError("O catálogo excedeu 100 páginas.")
 
     @staticmethod
     def turn(message, calls):
@@ -890,6 +925,9 @@ class Setup(ModalScreen[bool]):
                 yield Select([(p.capitalize(), p) for p in PROVIDERS], value=self.selected, allow_blank=False, id="provider")
                 yield Label("Modelo · use o identificador do provedor")
                 yield Input(id="model")
+                yield Select([], prompt="Selecione um modelo da API", id="model-catalog")
+                yield Button("Listar modelos", id="load-models")
+                yield Static("Cole a chave e clique em Listar modelos.", id="models-status", markup=False)
                 yield Label("URL base · editável para Other")
                 yield Input(id="base")
                 yield Label("API key / token Puter · vazio mantém a chave atual")
@@ -922,11 +960,50 @@ class Setup(ModalScreen[bool]):
         self.query_one("#base", Input).disabled = provider != "other"
         self.query_one("#model", Input).value = self.cfg.model if current else profile.get("model", PROVIDERS[provider][1])
         self.query_one("#key", Input).value = ""
+        self.query_one("#model-catalog", Select).set_options([])
+        self.query_one("#models-status", Static).update("Cole a chave e clique em Listar modelos.")
 
     @on(Select.Changed, "#provider")
     def change_provider(self, event):
         if isinstance(event.value, str) and self.is_mounted:
             self.fill_provider(event.value)
+
+    @on(Select.Changed, "#model-catalog")
+    def select_model(self, event):
+        if isinstance(event.value, str):
+            self.query_one("#model", Input).value = event.value
+
+    @on(Button.Pressed, "#load-models")
+    @work(exclusive=True, group="model-catalog")
+    async def load_models(self):
+        button = self.query_one("#load-models", Button)
+        status = self.query_one("#models-status", Static)
+        button.disabled = True
+        provider = self.query_one("#provider", Select).value
+        try:
+            cfg = Config(provider=provider, base_url=endpoint(self.query_one("#base", Input).value.strip()))
+            key = self.query_one("#key", Input).value.strip() or self.secrets.get(cfg)
+            if not key and self.secrets.path.exists():
+                await asyncio.to_thread(self.secrets.unlock, self.query_one("#password", Input).value)
+                key = self.secrets.get(cfg)
+            if not key and provider not in {"other", "puter"}:
+                raise ValueError("Cole a API key para consultar os modelos.")
+            status.update("Buscando modelos…")
+            async with httpx.AsyncClient(timeout=30) as http:
+                models = await Provider(cfg, key, http).models()
+            if self.query_one("#provider", Select).value != provider:
+                return
+            select = self.query_one("#model-catalog", Select)
+            select.set_options([(model, model) for model in models])
+            current = self.query_one("#model", Input).value
+            if current in models:
+                select.value = current
+            status.update(f"{len(models)} modelos encontrados. Selecione na lista ou digite o ID.")
+        except (ValueError, OSError, httpx.HTTPError, KeyError) as error:
+            status.update(self.secrets.redact(str(error))[:300])
+        finally:
+            if self.is_mounted:
+                button.disabled = False
 
     @on(Button.Pressed, "#cancel")
     def action_cancel(self):
